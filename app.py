@@ -838,8 +838,15 @@ def generate_unicode_pdf(image_pil, preds, desc, treat, severity, gradcam_img=No
 
     pdf.multi_cell(pdf.w - 20, 8, severity_text, fill=True)
 
-    return pdf.output(dest="S").encode("latin-1")
+    data = pdf.output(dest="S")
 
+    if isinstance(data, bytearray):
+        return bytes(data)
+
+    if isinstance(data, str):
+        return data.encode("latin-1")
+
+    return data
 
 
 # make the public generate_pdf_report point to Unicode-safe function
