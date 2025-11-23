@@ -838,7 +838,7 @@ def generate_unicode_pdf(image_pil, preds, desc, treat, severity, gradcam_img=No
 
     pdf.multi_cell(pdf.w - 20, 8, severity_text, fill=True)
 
-    return (pdf.output(dest="S"))
+    return pdf.output(dest="S").encode("latin-1")
 
 
 
