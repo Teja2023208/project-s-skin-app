@@ -4,4 +4,4 @@ numpy
 Pillow
 opencv-python
 matplotlib
-fpdf
+fpdf2
