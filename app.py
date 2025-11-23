@@ -1132,13 +1132,13 @@ for fname, pil_img in images:
 
     # PDF Export
     if FPDF is not None:
-        pdf_bytes = bytes(generate_pdf_report(
+        pdf_bytes = generate_pdf_report(
             pil_img,
             preds,
             new_desc,
             new_treat,
             severity
-        ))
+        )
 
         st.download_button(
             "Download report (PDF)",
