@@ -959,73 +959,57 @@ if enable_api:
 
 # End of Part 3
 
-import streamlit as st
+# End of Part 3
 
-# --- CSS (small, safe) ---
+# -------------------------------
+# CLEAN UI v2 (single clean upload + compact layout)
+# -------------------------------
+import io
+from PIL import Image as PILImage
+
 st.markdown(
     """
     <style>
-    .app-header {font-size:28px; font-weight:700; margin-bottom:8px;}
-    .muted {color: #6b7280;}
-    .card {background: #ffffff; padding:16px; border-radius:10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);}
-    .small {font-size:12px; color:#6b7280;}
+    .title {font-size:30px; font-weight:700; margin-bottom:4px;}
+    .subtitle {color:#6b7280; margin-top:0px; margin-bottom:18px;}
+    .upload-box {border:2px dashed #e6e6e6;padding:18px;border-radius:10px;text-align:center}
+    .small {font-size:13px;color:#6b7280}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# --- Sidebar ---
-st.sidebar.title("Project S — Skin Classifier")
-st.sidebar.markdown("Upload image, choose model & settings.")
-uploaded = st.sidebar.file_uploader("Upload skin image", type=["jpg","jpeg","png"])
-st.sidebar.selectbox("Model", ["v1 (current)", "v2 (experimental)"], index=0)
-st.sidebar.checkbox("Show Grad-CAM", value=True)
-st.sidebar.markdown("---")
-if st.sidebar.button("About"):
-    st.sidebar.info("Project S — Streamlit app. Version: master")
+st.markdown('<div class="title">Skin Disease Classifier</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Upload a close-up skin image. Diagnostic use is not intended.</div>', unsafe_allow_html=True)
 
-# --- Header ---
-col1, col2 = st.columns([4,1])
-with col1:
-    st.markdown('<div class="app-header">Skin Disease Classifier</div>', unsafe_allow_html=True)
-    st.markdown('<div class="muted">Upload image → get diagnosis, severity & downloadable report</div>', unsafe_allow_html=True)
-with col2:
-    pass  # preview thumbnail from your upload (local path)
+with st.sidebar:
+    st.markdown("### Settings")
+    st.checkbox("Auto-crop", value=auto_crop, key="auto_crop_ui")
+    st.checkbox("Grad-CAM", value=enable_gradcam, key="gradcam_ui")
+    st.slider("Top-K", 1, 5, value=top_k, key="topk_ui")
+    st.markdown("---")
+    st.caption("Better photos → Better results.")
 
-st.write("")  # spacing
+st.markdown('<div class="upload-box">', unsafe_allow_html=True)
+uploaded_file = st.file_uploader("Upload image", type=["jpg","jpeg","png"])
+st.markdown('</div>', unsafe_allow_html=True)
 
-# --- Main content area ---
-left, right = st.columns([2,1])
+camera_img = st.camera_input("Or capture with camera")
 
-with left:
-    st.markdown("### Image")
-    if uploaded:
-        img = uploaded.read()
-        st.image(img, use_column_width=True)
-        # If you have PIL image: pil_img = Image.open(io.BytesIO(img))
-    else:
-        st.info("Upload an image to see results.")
+images = []
+if uploaded_file:
+    pil = PILImage.open(io.BytesIO(uploaded_file.read())).convert("RGB")
+    images.append((uploaded_file.name, pil))
+elif camera_img:
+    pil = PILImage.open(io.BytesIO(camera_img.read())).convert("RGB")
+    images.append(("camera.jpg", pil))
 
-with right:
-    st.markdown("### Prediction")
-    st.write("")  # spacing
-    # Placeholder cards (replace with real values from your prediction pipeline)
-    st.write('<div class="card">', unsafe_allow_html=True)
-    st.metric("Top class", "—", delta="—")
-    st.write("<div class='small'>Confidence</div>", unsafe_allow_html=True)
-    st.progress(0)
-    st.write("</div>", unsafe_allow_html=True)
+if not images:
+    st.info("Upload or capture an image to continue.")
+    st.stop()
 
-# --- Footer actions ---
-st.divider()
-col_dl, col_empty = st.columns([1,4])
-with col_dl:
-    st.button("Re-run prediction")
-    st.download_button("Download PDF report", data=b"", file_name="report.pdf", mime="application/pdf")
-
-# --- small help text ---
-st.markdown('<div class="small">Tip: Use the sidebar to switch models and enable Grad-CAM.</div>', unsafe_allow_html=True)
-
+# Continue with downstream logic
+# -------------------------------
 # ----------------------------
 # Map language -> texts
 # ----------------------------
