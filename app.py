@@ -22,6 +22,7 @@ import streamlit as st
 from PIL import Image, ImageOps
 import numpy as np
 import tensorflow as tf
+from gtts import gTTS
 
 # Optional libs
 try:
@@ -722,6 +723,8 @@ if model_info["type"] == "none":
     st.error("No model found. Place a Keras model at models/skin_classifier.h5 or a TFLite model at models/skin_classifier.tflite")
     st.stop()
 
+APP_LANG = st.session_state.get("APP_LANG", "English")
+
 # ---- Default values for sidebar-controlled options (used by Classifier page) ----
 enable_api = False
 auto_crop = True
@@ -746,11 +749,9 @@ if "ps_page" not in st.session_state:
     st.session_state.ps_page = "Classifier"
 
 with st.sidebar:
-    st.markdown("## Navigation")
-    page_choice = st.radio("", PAGES, index=PAGES.index(st.session_state.ps_page))
-    st.session_state.ps_page = page_choice
+    st.button("Sync from custom_texts.json", key="sync_json")
     st.markdown("---")
-    st.caption("Project S — choose a page")
+    st.caption("Project S — informational only.")
 page = st.session_state.ps_page
 
 # ---------- Helper small UI utilities ----------
@@ -928,25 +929,6 @@ st.markdown(
 
 st.markdown('<div class="title">Skin Disease Classifier</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">Upload a close-up skin image. Diagnostic use is not intended.</div>', unsafe_allow_html=True)
-
-# Classifier-specific controls (placed inside classifier page)
-ccol1, ccol2 = st.columns([3, 1])
-with ccol2:
-    auto_crop = st.checkbox("Auto-crop lesion (heuristic)", value=auto_crop, key="auto_crop_ui")
-    enable_gradcam = st.checkbox("Enable Grad-CAM (Keras only)", value=enable_gradcam, key="gradcam_ui")
-    top_k = st.slider("Top K predictions", 1, 5, value=top_k, key="topk_ui")
-    temperature = st.slider("Temperature (calibration)", 0.5, 3.0, value=temperature, step=0.1, key="temp_ui")
-    st.markdown("---")
-    enable_api = st.checkbox("Enable REST API (Flask, background)", value=enable_api, key="api_ui")
-    api_port = st.number_input("API port", min_value=1025, max_value=65535, value=API_PORT_DEFAULT, key="api_port_ui")
-    st.checkbox("Auto-play audio after prediction", value=False, key="auto_play_audio")
-    st.markdown("---")
-    st.subheader("Language & Texts")
-    LANGUAGES = ["English", "Hindi", "Telugu"]
-    APP_LANG = st.selectbox("Select language", LANGUAGES, index=0, key="lang_ui")
-    if st.button("Sync from custom_texts.json", key="sync_json"):
-        CUSTOMS = load_custom_texts()
-        st.success("Synced custom_texts.json into memory (reloaded).")
 
 with st.container():
     st.markdown('<div class="upload-box">', unsafe_allow_html=True)
