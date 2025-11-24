@@ -953,7 +953,7 @@ with ccol2:
     st.subheader("Language & Texts (also in sidebar)")
     LANGUAGES = ["English", "Hindi", "Telugu"]
     APP_LANG = st.selectbox("Select language", LANGUAGES, index=0, key="lang_ui")
-    if st.button("Sync from custom_texts.json", key="sync_json"):
+    if st.button("Sync custom texts", key="sync_json_classifier"):
         CUSTOMS = load_custom_texts()
         st.success("Synced custom_texts.json into memory (reloaded).")
 
