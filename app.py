@@ -1037,52 +1037,29 @@ def get_text_maps(lang: str):
 
 DESCRIPTIONS, TREATMENTS, LANG_CODE = get_text_maps(APP_LANG)
 
-# Input UI
-col1, col2 = st.columns([2, 1])
-with col1:
-    uploaded = st.file_uploader("Upload images (you can select multiple)", type=["jpg","jpeg","png"], accept_multiple_files=True)
-    cam = st.camera_input("Or capture with camera", key="camera_1")
-with col2:
-    st.write("Tips:")
-    st.write("- Take a focused close-up of the lesion")
-    st.write("- Use natural lighting, avoid heavy filters")
-    st.write("- For urgent change/bleeding/rapid growth, seek clinician")
+# -------------------------------
+# Process images (Clean UI v2 only)
+# -------------------------------
+DESCRIPTIONS, TREATMENTS, LANG_CODE = get_text_maps(APP_LANG)
 
-# Build images list
-images: List[Tuple[str, Image.Image]] = []
-if uploaded:
-    for f in uploaded:
-        try:
-            images.append((f.name, Image.open(io.BytesIO(f.read())).convert("RGB")))
-        except Exception as e:
-            st.warning(f"Could not open {f.name}: {e}")
-if cam:
-    try:
-        img = Image.open(io.BytesIO(cam.read())).convert("RGB")
-        images.insert(0, ("camera.jpg", img))
-    except Exception:
-        pass
-
-if not images:
-    st.info("Upload or capture an image to run the classifier.")
-    st.stop()
-
-# process each image
 for fname, pil_img in images:
     st.markdown("---")
     st.header(f"Image: {fname}")
-    st.image(pil_img, caption="Original", use_container_width=False, width=420)
+    st.image(pil_img, caption="Original", width=420)
+
     # skin check
     mask = skin_mask_ycrcb(pil_img)
-    skin_frac = float((mask > 0).sum()) / (mask.shape[0]*mask.shape[1] + 1e-9)
+    skin_frac = float((mask > 0).sum()) / (mask.shape[0] * mask.shape[1] + 1e-9)
     st.write(f"Skin pixel fraction: {skin_frac:.3f}")
     if skin_frac < 0.02:
         st.error("Not a skin image (low skin pixel fraction). Try another photo.")
         continue
 
     # preprocess
-    target_h, target_w, target_c = model_info["input_shape"]
-    processed_arr, crop_box = preprocess_pil(pil_img, target_size=(target_h, target_w), auto_crop=auto_crop)
+    target_h, target_w, _ = model_info["input_shape"]
+    processed_arr, crop_box = preprocess_pil(
+        pil_img, target_size=(target_h, target_w), auto_crop=auto_crop
+    )
     st.write(f"Auto-crop applied: {'Yes' if crop_box else 'No'}")
 
     # severity
@@ -1104,107 +1081,43 @@ for fname, pil_img in images:
     top_idx, top_prob = preds[0]
     top_label = DISPLAY_NAMES.get(IDX_TO_LABEL.get(top_idx, ""), f"class_{top_idx}")
     color = confidence_color(top_prob)
-    st.markdown(f"### 🔍 Prediction Result — *{top_label}*")
-    st.markdown(f"<div style='padding:10px;border-left:6px solid {color};border-radius:6px;'>Confidence: <strong>{top_prob*100:5.1f}%</strong></div>", unsafe_allow_html=True)
+    st.markdown(f"### 🔍 Prediction — *{top_label}*")
+    st.markdown(
+        f"<div style='padding:10px;border-left:6px solid {color};border-radius:6px;'>"
+        f"Confidence: <strong>{top_prob*100:5.1f}%</strong></div>",
+        unsafe_allow_html=True,
+    )
 
     # description & treatment
-    desc_default = CUSTOMS.get("descriptions", {}).get(IDX_TO_LABEL.get(top_idx, ""), DESCRIPTIONS.get(IDX_TO_LABEL.get(top_idx), "No description available."))
-    treat_default = CUSTOMS.get("treatments", {}).get(IDX_TO_LABEL.get(top_idx, ""), TREATMENTS.get(IDX_TO_LABEL.get(top_idx), "See a clinician for personalized treatment."))
+    desc_default = DESCRIPTIONS.get(IDX_TO_LABEL.get(top_idx), "")
+    treat_default = TREATMENTS.get(IDX_TO_LABEL.get(top_idx), "")
+
     colA, colB = st.columns([2, 3])
     with colA:
         st.markdown("#### Brief description")
         new_desc = st.text_area(f"desc_{fname}", value=desc_default, height=120)
-        st.markdown("#### Suggested next steps (informational)")
-        st.write("- Re-take image with close-up, good lighting.")
-        st.write("- Avoid topical creams before imaging.")
-        st.write("- Seek dermatology for persistent or suspicious lesions.")
+
     with colB:
-        st.markdown("#### Suggested treatment ideas (informational)")
+        st.markdown("#### Suggested treatment")
         new_treat = st.text_area(f"treat_{fname}", value=treat_default, height=120)
         st.markdown("#### Severity")
         st.write(f"Level: *{severity['level']}* — Score: *{severity['score']:.2f}*")
-        st.write(f"Estimated lesion area fraction: *{severity['area_pct']*100:.1f}%*")
-        st.write(f"Redness metric: *{severity['redness']:.3f}*")
+        st.write(f"Area: *{severity['area_pct']*100:.1f}%*")
+        st.write(f"Redness: *{severity['redness']:.3f}*")
 
-    # show top-k bar list
-    st.markdown("### 📊 Top predictions")
-    for idx, prob in preds:
-        label = DISPLAY_NAMES.get(IDX_TO_LABEL.get(idx, ""), f"class_{idx}")
-        pct = prob * 100.0
-        bar_html = (
-            f"<div style='display:flex;align-items:center;gap:12px;margin-bottom:6px;'>"
-            f"<div style='flex:1'><strong>{label}</strong></div>"
-            f"<div style='width:60%;background:#efefef;border-radius:6px;padding:4px;'>"
-            f"<div style='width:{pct}%;background:{confidence_color(prob)};height:12px;border-radius:6px;'></div>"
-            f"</div>"
-            f"<div style='width:80px;text-align:right'>{pct:5.1f}%</div>"
-            f"</div>"
-        )
-        st.markdown(bar_html, unsafe_allow_html=True)
-
-    # Grad-CAM overlay if enabled and keras model
+    # Grad-CAM
     gradcam_img = None
     if enable_gradcam and model_info["type"] == "keras":
-        heatmap = make_gradcam_heatmap(processed_arr, model_info["model"], last_conv_layer_name=None, pred_index=int(top_idx))
-        try:
-            if crop_box:
-                display_base = pil_img.crop(crop_box).resize((target_w, target_h))
-            else:
-                display_base = pil_img.resize((target_w, target_h))
-            gradcam_img = overlay_heatmap_on_image(display_base, heatmap, alpha=0.45)
-            st.image(gradcam_img, caption="Grad-CAM overlay", width=420)
-        except Exception:
-            gradcam_img = None
-
-    # AI generate description/treatment
-    if st.button(f"AI-generate description/treatment for {top_label}"):
-        desc_gen, treat_gen = ai_generate_texts(IDX_TO_LABEL.get(top_idx, ""), lang=APP_LANG)
-        st.info("AI-generated texts (preview)")
-        st.write("Description:", desc_gen)
-        st.write("Treatment:", treat_gen)
-        if st.button("Use AI-generated texts (save)"):
-            CUSTOMS.setdefault("descriptions", {})[IDX_TO_LABEL.get(top_idx, "")] = desc_gen
-            CUSTOMS.setdefault("treatments", {})[IDX_TO_LABEL.get(top_idx, "")] = treat_gen
-            save_custom_texts(CUSTOMS)
-            st.success("Saved AI-generated texts to custom_texts.json")
-
-    # Voice TTS
-    full_text = f"{new_desc}. Treatment: {new_treat}."
-    if st.button("🔊 Voice Explanation"):
-        audio_bytes = text_to_audio_bytes(full_text, lang_code=LANG_CODE)
-        if audio_bytes:
-            st.audio(audio_bytes, format="audio/mp3")
-        else:
-            st.error("Text-to-speech unavailable (gTTS not installed or TTS failed).")
-
-    if st.session_state.get("auto_play_audio", False):
-        audio_bytes = text_to_audio_bytes(full_text, lang_code=LANG_CODE)
-        if audio_bytes:
-            st.audio(audio_bytes, format="audio/mp3")
-
-    # Save to DB
-    if st.button(f"Save report to History for {fname}"):
-        img_for_save = gradcam_img if gradcam_img is not None else pil_img
-        rid = save_report_to_db(fname, preds, new_desc, new_treat, severity, img_for_save)
-        st.success(f"Saved report id {rid}")
-
+        heatmap = make_gradcam_heatmap(processed_arr, model_info["model"], None, int(top_idx))
+        if heatmap is not None:
+            base_img = pil_img.crop(crop_box).resize((target_w, target_h)) if crop_box else pil_img.resize((target_w, target_h))
+            gradcam_img = overlay_heatmap_on_image(base_img, heatmap, alpha=0.45)
+            st.image(gradcam_img, caption="Grad-CAM", width=420)
 
     # PDF Export
     if FPDF is not None:
-        pdf_bytes = generate_pdf_report(
-            pil_img,
-            preds,
-            new_desc,
-            new_treat,
-            severity
-        )
-
-        st.download_button(
-            "Download report (PDF)",
-            pdf_bytes,
-            file_name=f"report_{fname}.pdf",
-            mime="application/pdf"
-        )
+        pdf_bytes = generate_pdf_report(pil_img, preds, new_desc, new_treat, severity)
+        st.download_button("Download PDF", pdf_bytes, file_name=f"report_{fname}.pdf", mime="application/pdf")
 
     else:
         st.error("FPDF/fpdf2 or fonts not installed. Install fpdf2 and add fonts to enable PDF reports.")
