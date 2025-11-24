@@ -732,6 +732,10 @@ if model_info["type"] == "none":
     st.error("No model found. Place a Keras model at models/skin_classifier.h5 or a TFLite model at models/skin_classifier.tflite")
     st.stop()
 
+# ---- SAFE initialize APP_LANG ----
+if "APP_LANG" not in st.session_state:
+    st.session_state.APP_LANG = "English"
+
 # Defaults
 enable_api = False
 auto_crop = True
@@ -756,9 +760,6 @@ if "ps_page" not in st.session_state:
 with st.sidebar:
     LANGUAGES = ["English", "Hindi", "Telugu"]
 
-    if "APP_LANG" not in st.session_state:
-        st.session_state.APP_LANG 
-
     st.session_state.APP_LANG = st.selectbox(
         "Select language",
         LANGUAGES,
@@ -766,9 +767,9 @@ with st.sidebar:
     )
 
     st.button("Sync from custom_texts.json", key="sync_json_sidebar")
-
     st.markdown("---")
     st.caption("Project S — informational only.")
+
 
     page_choice = st.radio("", PAGES, index=PAGES.index(st.session_state.ps_page))
     st.session_state.ps_page = page_choice
@@ -962,7 +963,7 @@ with ccol2:
     st.markdown("---")
     st.subheader("Language & Texts (also in sidebar)")
     LANGUAGES = ["English", "Hindi", "Telugu"]
-    APP_LANG = st.selectbox("Select language", LANGUAGES, index=0, key="lang_ui")
+    APP_LANG = st.session_state.APP_LANG
     if st.button("Sync custom texts", key="sync_json_classifier"):
         CUSTOMS = load_custom_texts()
         st.success("Synced custom_texts.json into memory (reloaded).")
