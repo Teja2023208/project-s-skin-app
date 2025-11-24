@@ -994,7 +994,7 @@ st.markdown('<div class="upload-box">', unsafe_allow_html=True)
 uploaded_file = st.file_uploader("Upload image", type=["jpg","jpeg","png"])
 st.markdown('</div>', unsafe_allow_html=True)
 
-camera_img = st.camera_input("Or capture with camera")
+camera_img = st.camera_input("Or capture with camera", key="camera_ui")
 
 images = []
 if uploaded_file:
@@ -1041,7 +1041,7 @@ DESCRIPTIONS, TREATMENTS, LANG_CODE = get_text_maps(APP_LANG)
 col1, col2 = st.columns([2, 1])
 with col1:
     uploaded = st.file_uploader("Upload images (you can select multiple)", type=["jpg","jpeg","png"], accept_multiple_files=True)
-    cam = st.camera_input("Or capture with camera")
+    cam = st.camera_input("Or capture with camera", key="camera_1")
 with col2:
     st.write("Tips:")
     st.write("- Take a focused close-up of the lesion")
