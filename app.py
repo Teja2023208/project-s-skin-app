@@ -738,7 +738,6 @@ auto_crop = True
 enable_gradcam = True  # Grad-CAM enabled by default (user confirmed)
 top_k = TOP_K_DEFAULT
 temperature = 1.0
-APP_LANG = "English"
 
 # ----------------------------
 # SIDEBAR NAV + PAGES
@@ -755,11 +754,9 @@ if "ps_page" not in st.session_state:
     st.session_state.ps_page = "Classifier"
 
 with st.sidebar:
-    st.markdown("### Language & Texts")
     LANGUAGES = ["English", "Hindi", "Telugu"]
-    # sidebar language selector
-    sidebar_lang = st.selectbox("Select language", LANGUAGES, index=0, key="sidebar_lang")
-    st.button("Sync from custom_texts.json", key="sync_json_sidebar")
+    st.session_state.APP_LANG = st.selectbox("Select language", LANGUAGES, index=LANGUAGES.index(st.session_state.get("APP_LANG","English")))
+    st.button("Sync from custom_texts.json", key="sync_json")
     st.markdown("---")
     st.caption("Project S — informational only.")
     st.markdown("### Navigation")
