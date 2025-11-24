@@ -921,29 +921,6 @@ else:
     except Exception:
         pass
 
-# Sidebar controls
-with st.sidebar:
-    st.title("Project S — Full")
-    st.markdown("Advanced skin disease classifier — informational only.")
-    st.markdown("---")
-    st.write("Model (Keras):"); st.code(MODEL_PATH)
-    st.write("Model (TFLite optional):"); st.code(TFLITE_PATH)
-    auto_crop = st.checkbox("Auto-crop lesion (heuristic)", value=True)
-    enable_gradcam = st.checkbox("Enable Grad-CAM (Keras only)", value=True)
-    top_k = st.slider("Top K predictions", 1, 5, TOP_K_DEFAULT)
-    temperature = st.slider("Temperature (calibration)", 0.5, 3.0, 1.0, step=0.1)
-    st.markdown("---")
-    st.subheader("Persistence & API")
-    enable_api = st.checkbox("Enable REST API (Flask, background)", value=False)
-    api_port = st.number_input("API port", min_value=1025, max_value=65535, value=API_PORT_DEFAULT)
-    st.checkbox("Auto-play audio after prediction", value=False, key="auto_play_audio")
-    st.markdown("---")
-    st.subheader("Language & Texts")
-    LANGUAGES = ["English", "Hindi", "Telugu"]
-    APP_LANG = st.selectbox("Select language", LANGUAGES, index=0)
-    st.button("Sync from custom_texts.json", key="sync_json")
-    st.markdown("---")
-    st.caption("Not medical advice — consult a dermatologist for diagnosis and treatment.")
 
 # Load model
 with st.spinner("Loading model..."):
@@ -952,9 +929,27 @@ if model_info["type"] == "none":
     st.error("No model found. Place a Keras model at models/skin_classifier.h5 or a TFLite model at models/skin_classifier.tflite")
     st.stop()
 
+# ---- Default values for removed sidebar controls ----
+enable_api = False
+auto_crop = True
+enable_gradcam = True
+top_k = TOP_K_DEFAULT
+temperature = 1.0
+APP_LANG = "English"
+# ------------------------------------------------------
+
+
 # ----------------------------
 # SIDEBAR NAV + PAGES (Insert right after model_info = load_model())
 # ----------------------------
+
+# Default values for parameters normally set by sidebar (now controlled only inside Classifier page)
+enable_api = False
+auto_crop = True
+enable_gradcam = True
+top_k = TOP_K_DEFAULT
+temperature = 1.0
+APP_LANG = "English"
 
 # Sidebar navigation (Option A pages)
 PAGES = [
@@ -1196,13 +1191,6 @@ st.markdown(
 st.markdown('<div class="title">Skin Disease Classifier</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">Upload a close-up skin image. Diagnostic use is not intended.</div>', unsafe_allow_html=True)
 
-with st.sidebar:
-    st.markdown("### Settings")
-    st.checkbox("Auto-crop", value=auto_crop, key="auto_crop_ui")
-    st.checkbox("Grad-CAM", value=enable_gradcam, key="gradcam_ui")
-    st.slider("Top-K", 1, 5, value=top_k, key="topk_ui")
-    st.markdown("---")
-    st.caption("Better photos → Better results.")
 
 st.markdown('<div class="upload-box">', unsafe_allow_html=True)
 uploaded_file = st.file_uploader("Upload image", type=["jpg","jpeg","png"])
