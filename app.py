@@ -952,6 +952,220 @@ if model_info["type"] == "none":
     st.error("No model found. Place a Keras model at models/skin_classifier.h5 or a TFLite model at models/skin_classifier.tflite")
     st.stop()
 
+# ----------------------------
+# SIDEBAR NAV + PAGES (Insert right after model_info = load_model())
+# ----------------------------
+
+# Sidebar navigation (Option A pages)
+PAGES = [
+    "Classifier",
+    "History",
+    "Custom Text Editor",
+    "Skin Detection Preview",
+    "Audio Output",
+    "Severity Charts",
+]
+if "ps_page" not in st.session_state:
+    st.session_state.ps_page = "Classifier"
+
+with st.sidebar:
+    st.markdown("## Navigation")
+    page_choice = st.radio("", PAGES, index=PAGES.index(st.session_state.ps_page))
+    st.session_state.ps_page = page_choice
+    st.markdown("---")
+    st.caption("Project S — choose a page")
+
+page = st.session_state.ps_page
+
+# ---------- Helper small UI utilities ----------
+def show_message_ok(msg: str):
+    st.success(msg)
+
+def show_message_warn(msg: str):
+    st.warning(msg)
+
+def safe_get_report_image(report_id: int):
+    b = get_report_image_bytes(report_id)
+    if b:
+        return Image.open(io.BytesIO(b)).convert("RGB")
+    return None
+
+# ---------- Page: History ----------
+def render_history_page():
+    st.header("📁 History — Saved Reports")
+    rows = list_reports(limit=500)
+    if not rows:
+        st.info("No saved reports.")
+        return
+    # show table summary
+    df_rows = []
+    for r in rows:
+        df_rows.append({
+            "id": r["id"],
+            "filename": r["filename"],
+            "timestamp": r["timestamp"],
+            "top_label": r["top_label"],
+            "top_prob": f"{r['top_prob']*100:.1f}%"
+        })
+    df = pd.DataFrame(df_rows)
+    st.dataframe(df, use_container_width=True)
+
+    st.markdown("### Actions")
+    cols = st.columns(3)
+    sel_id = st.number_input("Enter report id to view/delete", min_value=1, value=rows[0]["id"], step=1)
+    if cols[0].button("View report"):
+        rep = next((r for r in rows if r["id"] == sel_id), None)
+        if not rep:
+            st.error("Report not found.")
+        else:
+            st.subheader(f"Report #{rep['id']} — {rep['filename']}")
+            img = safe_get_report_image(rep["id"])
+            if img:
+                st.image(img, width=420)
+            st.markdown("**Prediction**: " + str(rep["top_label"]))
+            st.markdown("**Confidence**: " + f"{rep['top_prob']*100:.1f}%")
+            st.markdown("**Description**")
+            st.write(rep.get("description", ""))
+            st.markdown("**Treatment**")
+            st.write(rep.get("treatment", ""))
+            st.markdown("**Severity**")
+            st.json(rep.get("severity", {}))
+            # allow deleting or download pdf
+            if cols[1].button("Download PDF", key=f"dlpdf_{rep['id']}"):
+                img = safe_get_report_image(rep["id"])
+                pdfb = generate_pdf_report(img if img else Image.new("RGB",(100,100),(255,255,255)),
+                                           rep.get("preds", []), rep.get("description",""), rep.get("treatment",""), rep.get("severity", {}))
+                if pdfb:
+                    st.download_button("Download report PDF", pdfb, file_name=f"report_{rep['id']}.pdf", mime="application/pdf")
+                else:
+                    st.error("PDF generation unavailable.")
+            if cols[2].button("Delete", key=f"del_{rep['id']}"):
+                delete_report(rep["id"])
+                st.success("Report deleted. Refresh page to update list.")
+
+# ---------- Page: Custom Text Editor ----------
+def render_custom_text_editor():
+    st.header("📝 Custom Text Editor (Descriptions & Treatments)")
+    customs = load_custom_texts()
+    descs = customs.get("descriptions", {})
+    treats = customs.get("treatments", {})
+
+    st.markdown("Edit descriptions and treatments for classes. Click Save to persist to `custom_texts.json`.")
+    # show a compact editor: select class then edit
+    options = list(CLASS_INDICES.keys())
+    sel = st.selectbox("Select class key", options, format_func=lambda k: DISPLAY_NAMES.get(k, k))
+    cur_desc = descs.get(sel, DESCRIPTIONS_EN.get(sel, ""))
+    cur_treat = treats.get(sel, TREATMENTS_EN.get(sel, ""))
+
+    new_desc = st.text_area("Description", value=cur_desc, height=120)
+    new_treat = st.text_area("Treatment", value=cur_treat, height=120)
+
+    if st.button("Save changes for selected class"):
+        customs.setdefault("descriptions", {})[sel] = new_desc
+        customs.setdefault("treatments", {})[sel] = new_treat
+        save_custom_texts(customs)
+        st.success("Saved custom text. Use Sync button in sidebar to reload into app memory.")
+        # refresh in-memory CUSTOMS
+        global CUSTOMS
+        CUSTOMS = load_custom_texts()
+
+    if st.button("Reset all custom texts (delete custom_texts.json)"):
+        if os.path.exists(CUSTOM_TEXTS):
+            os.remove(CUSTOM_TEXTS)
+        CUSTOMS = {"descriptions": {}, "treatments": {}}
+        st.success("Custom texts removed; defaults restored.")
+
+# ---------- Page: Skin Detection Preview ----------
+def render_skin_preview():
+    st.header("🖼️ Skin Detection Preview")
+    st.markdown("Upload an image to preview skin mask, detected region bounding box and suggested auto-crop.")
+    up = st.file_uploader("Upload image for skin preview", type=["jpg","jpeg","png"])
+    if not up:
+        st.info("Upload an image to preview.")
+        return
+    pil = Image.open(io.BytesIO(up.read())).convert("RGB")
+    st.image(pil, caption="Original", width=420)
+    mask = skin_mask_ycrcb(pil)
+    skin_frac = float((mask > 0).sum()) / (mask.shape[0]*mask.shape[1] + 1e-9)
+    st.write(f"Skin pixel fraction: {skin_frac:.3f}")
+    # show mask as image
+    mask_img = Image.fromarray(np.stack([mask]*3, axis=2))
+    st.image(mask_img, caption="Skin mask (white = skin)", width=420)
+    crop, box = auto_crop_by_skin(pil)
+    if crop is not None:
+        st.image(crop, caption=f"Auto-crop preview {box}", width=360)
+    else:
+        st.info("Auto-crop heuristic couldn't find a dominant skin region.")
+    st.markdown("Tip: if mask misses area, try a closer/clearer photo or disable auto-crop in main UI.")
+
+# ---------- Page: Audio Output (TTS) ----------
+def render_audio_output():
+    st.header("🔊 Text-to-Speech (Audio Output)")
+    st.markdown("Generate audio from the current description/treatment text or paste custom text below.")
+    txt = st.text_area("Text to speak (leave empty to use top prediction description)", height=160)
+    lang_choice = st.selectbox("Language for speech", ["English", "Hindi", "Telugu"], index=0)
+    lang_map = {"English":"en","Hindi":"hi","Telugu":"te"}
+    lang_code_local = lang_map.get(lang_choice,"en")
+    if st.button("Generate audio"):
+        if not txt:
+            st.warning("Please provide text to synthesize.")
+        else:
+            b = text_to_audio_bytes(txt, lang_code=lang_code_local)
+            if b:
+                st.audio(b, format="audio/mp3")
+            else:
+                st.error("TTS unavailable (gTTS not installed or failed).")
+
+# ---------- Page: Severity Charts ----------
+def render_severity_charts():
+    st.header("📊 Severity Charts")
+    st.markdown("Generate charts for the latest prediction or upload an image to compute severity metrics.")
+    choice = st.radio("Source", ["Use uploaded image", "Upload new image"], index=0)
+    if choice == "Use uploaded image":
+        st.info("This will use the existing uploaded image only if you reached the Classifier page and predicted. Otherwise upload an image here.")
+        # try to use the image currently in session (best-effort)
+        # we don't have a saved global image var — ask user to upload if not available
+    upload = st.file_uploader("Upload image for severity plot", type=["jpg","jpeg","png"])
+    img = None
+    if upload:
+        img = Image.open(io.BytesIO(upload.read())).convert("RGB")
+    else:
+        st.info("Upload an image to generate severity charts.")
+    if img:
+        severity = estimate_severity(img, None)
+        st.write("Severity values:")
+        st.json(severity)
+        # simple matplotlib bar chart
+        import matplotlib.pyplot as plt
+        metrics = {"Area%": severity["area_pct"]*100, "Redness": severity["redness"]*100, "Texture": severity["texture"]*100}
+        fig, ax = plt.subplots(figsize=(6,3))
+        ax.bar(metrics.keys(), metrics.values())
+        ax.set_ylabel("Scaled percent")
+        ax.set_ylim(0, 100)
+        st.pyplot(fig)
+
+# ---------- Page Dispatcher (render page then stop to avoid showing Classifier UI) ----------
+if page != "Classifier":
+    if page == "History":
+        render_history_page()
+    elif page == "Custom Text Editor":
+        render_custom_text_editor()
+    elif page == "Skin Detection Preview":
+        render_skin_preview()
+    elif page == "Audio Output":
+        render_audio_output()
+    elif page == "Severity Charts":
+        render_severity_charts()
+    else:
+        st.info("Unknown page")
+    # stop here so the rest of your existing Classifier UI does not render below
+    st.stop()
+
+# If page == "Classifier", execution continues into your existing classifier code (no change needed).
+# ----------------------------
+# END SIDEBAR NAV + PAGES
+# ----------------------------
+
 # Start API if enabled
 if enable_api:
     start_api_server(host=API_HOST, port=int(api_port))
@@ -1034,8 +1248,6 @@ def get_text_maps(lang: str):
     for k, v in customs.get("treatments", {}).items():
         treats[k] = v
     return descs, treats, lang_code
-
-DESCRIPTIONS, TREATMENTS, LANG_CODE = get_text_maps(APP_LANG)
 
 # -------------------------------
 # Process images (Clean UI v2 only)
