@@ -755,11 +755,21 @@ if "ps_page" not in st.session_state:
 
 with st.sidebar:
     LANGUAGES = ["English", "Hindi", "Telugu"]
-    st.session_state.APP_LANG = st.selectbox("Select language", LANGUAGES, index=LANGUAGES.index(st.session_state.get("APP_LANG","English")))
-    st.button("Sync from custom_texts.json", key="sync_json")
+
+    if "APP_LANG" not in st.session_state:
+        st.session_state.APP_LANG 
+
+    st.session_state.APP_LANG = st.selectbox(
+        "Select language",
+        LANGUAGES,
+        index=LANGUAGES.index(st.session_state.APP_LANG)
+    )
+
+    st.button("Sync from custom_texts.json", key="sync_json_sidebar")
+
     st.markdown("---")
     st.caption("Project S — informational only.")
-    st.markdown("### Navigation")
+
     page_choice = st.radio("", PAGES, index=PAGES.index(st.session_state.ps_page))
     st.session_state.ps_page = page_choice
 
