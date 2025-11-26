@@ -280,7 +280,7 @@ class MedicalPDF(FPDF):
         if "Noto" in self.fonts:
             self.set_font("Noto", size=12)
         else:
-            self.set_font("Arial", size=12)
+            set_font(unicode_font if unicode_font else "Arial", size=12)
         self.set_fill_color(240, 240, 240)
         self.rect(0, 0, self.w, 18, "F")
         self.set_xy(10, 5)
@@ -302,9 +302,19 @@ def generate_unicode_pdf(image_pil, preds, desc, treat, severity, gradcam_img=No
     en = os.path.join(FONTS_DIR, "NotoSans-Regular.ttf")
     hi = os.path.join(FONTS_DIR, "NotoSansDevanagari-Regular.ttf")
     te = os.path.join(FONTS_DIR, "NotoSansTelugu-Regular.ttf")
-    if os.path.exists(en): pdf.add_font("Noto", "", en, uni=True)
-    if os.path.exists(hi): pdf.add_font("NotoDev", "", hi, uni=True)
-    if os.path.exists(te): pdf.add_font("NotoTel", "", te, uni=True)
+    # Force Unicode font loading
+    if os.path.exists(en):
+        pdf.add_font("Noto", "", en)
+        unicode_font = "Noto"
+    elif os.path.exists(hi):
+        pdf.add_font("NotoDev", "", hi)
+        unicode_font = "NotoDev"
+    elif os.path.exists(te):
+        pdf.add_font("NotoTel", "", te)
+        unicode_font = "NotoTel"
+    else:
+        unicode_font = None
+
     def auto_font(text, size=12):
         if any("\u0900" <= c <= "\u097F" for c in text):
             pdf.set_font("NotoDev" if "NotoDev" in pdf.fonts else "Noto", size=size)
