@@ -344,10 +344,25 @@ def generate_unicode_pdf(image_pil, preds, desc, treat, severity, gradcam_img=No
     auto_font("Description", 14)
     pdf.cell(0, 10, "Description", ln=True)
     pdf.set_fill_color(248, 248, 248)
+    # choose correct font based on language
+    if any("\u0900" <= c <= "\u097F" for c in desc):
+        pdf.set_font("NotoDev" if "NotoDev" in pdf.fonts else "Arial", size=12)
+    elif any("\u0C00" <= c <= "\u0C7F" for c in desc):
+        pdf.set_font("NotoTel" if "NotoTel" in pdf.fonts else "Arial", size=12)
+    else:
+        pdf.set_font("Noto" if "Noto" in pdf.fonts else "Arial", size=12)
+
     pdf.multi_cell(pdf.w - 20, 8, desc, fill=True)
     pdf.ln(5)
     auto_font("Suggested Treatment", 14)
     pdf.cell(0, 10, "Suggested Treatment", ln=True)
+    if any("\u0900" <= c <= "\u097F" for c in treat):
+        pdf.set_font("NotoDev" if "NotoDev" in pdf.fonts else "Arial", size=12)
+    elif any("\u0C00" <= c <= "\u0C7F" for c in treat):
+        pdf.set_font("NotoTel" if "NotoTel" in pdf.fonts else "Arial", size=12)
+    else:
+        pdf.set_font("Noto" if "Noto" in pdf.fonts else "Arial", size=12)
+
     pdf.multi_cell(pdf.w - 20, 8, treat, fill=True)
     pdf.ln(5)
     auto_font("Severity Analysis", 14)
