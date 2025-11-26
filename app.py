@@ -1,9 +1,10 @@
 # =========================
 # app.py — Project S (Clean Final, Option A - Full)
-# Single-file Streamlit app (final corrected)
+# Complete single-file Streamlit app including:
 # - Sidebar navigation
-# - All pages (Classifier, History, Custom Text Editor, Skin Detection Preview, Audio Output, Severity Charts)
-# - Classifier page: clean UI, language selector in sidebar & classifier, Grad-CAM enabled by default
+# - All 7 modules (Classifier, History, Custom Text Editor, Skin Detection Preview, Audio, Severity Charts)
+# - Classifier page with Grad-CAM, PDF export, CSV export
+# - Cleaned, minimal, and consistent variable definitions
 # =========================
 
 import os
@@ -29,14 +30,10 @@ except Exception:
     cv2 = None
 
 # fpdf2 required
-try:
-    from fpdf import FPDF
-    import fpdf as _fpdf_pkg
-except Exception:
-    FPDF = None
-    _fpdf_pkg = None
+from fpdf import FPDF
+import fpdf as _fpdf_pkg
 
-# Flask for API (optional)
+# Flask for API (optional; disabled on Streamlit Cloud)
 try:
     from flask import Flask, request, jsonify
 except Exception:
@@ -58,6 +55,7 @@ DB_PATH = "project_s_reports.db"
 CUSTOM_TEXTS = "custom_texts.json"
 API_HOST = "127.0.0.1"
 API_PORT_DEFAULT = 8502
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", None)
 FONTS_DIR = "fonts"  # place Noto fonts here
 
 # ----------------------------
@@ -145,14 +143,14 @@ TREATMENTS_EN = {
     "viral_infections": "Supportive care. Antivirals for specific infections.",
 }
 
-# Hindi & Telugu (short copies of English for now — can be customized)
+# Hindi & Telugu translations (shortened duplicates for brevity)
 DESCRIPTIONS_HI = {k: v for k, v in DESCRIPTIONS_EN.items()}
 TREATMENTS_HI = {k: v for k, v in TREATMENTS_EN.items()}
 DESCRIPTIONS_TE = {k: v for k, v in DESCRIPTIONS_EN.items()}
 TREATMENTS_TE = {k: v for k, v in TREATMENTS_EN.items()}
 
 # ----------------------------
-# UTILS
+# UTILITIES
 # ----------------------------
 def pretty_pct(x: float) -> str:
     return f"{x*100:5.1f}%"
@@ -385,6 +383,8 @@ def predict_with_model(model_info: Dict, processed_array: np.ndarray, temperatur
 # ----------------------------
 # PDF: Unicode-safe using fpdf2 and Noto fonts
 # ----------------------------
+FONTS_DIR = "fonts"
+
 class MedicalPDF(FPDF):
     def header(self):
         if "Noto" in self.fonts:
@@ -419,8 +419,6 @@ def sanitize_ascii(text: str) -> str:
     )
 
 def generate_unicode_pdf(image_pil, preds, desc, treat, severity, gradcam_img=None):
-    if FPDF is None:
-        return None
     pdf = MedicalPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
@@ -437,7 +435,6 @@ def generate_unicode_pdf(image_pil, preds, desc, treat, severity, gradcam_img=No
             pdf.set_font("NotoTel" if "NotoTel" in pdf.fonts else "Noto", size=size)
         else:
             pdf.set_font("Noto" if "Noto" in pdf.fonts else "Arial", size=size)
-
     left_x = 10
     img_width = 90
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
@@ -448,19 +445,16 @@ def generate_unicode_pdf(image_pil, preds, desc, treat, severity, gradcam_img=No
         os.remove(tmp_path)
     except:
         pass
-
     right_x = left_x + img_width + 20
     pdf.set_xy(right_x, 30)
     auto_font("Top Prediction:", 14)
     pdf.cell(0, 8, "Top Prediction:", ln=True)
-
     top_idx, top_prob = preds[0]
     label = DISPLAY_NAMES.get(IDX_TO_LABEL.get(top_idx, ""), f"Class {top_idx}")
     label_line = sanitize_ascii(f"{label} - {top_prob*100:.1f}%")
     pdf.set_x(right_x)
     auto_font(label_line, 12)
     pdf.cell(0, 7, label_line, ln=True)
-
     if gradcam_img:
         tmp_fd, grad_path = tempfile.mkstemp(suffix=".jpg")
         os.close(tmp_fd)
@@ -470,7 +464,6 @@ def generate_unicode_pdf(image_pil, preds, desc, treat, severity, gradcam_img=No
             os.remove(grad_path)
         except:
             pass
-
     pdf.set_y(140)
     auto_font("Description", 14)
     pdf.set_text_color(0, 0, 0)
@@ -513,7 +506,6 @@ def start_api_server(host=API_HOST, port=API_PORT_DEFAULT):
     if flask_app is not None:
         return
     flask_app = Flask("project_s_api")
-
     @flask_app.route("/predict", methods=["POST"])
     def api_predict():
         try:
@@ -543,15 +535,12 @@ def start_api_server(host=API_HOST, port=API_PORT_DEFAULT):
             return jsonify({"preds": preds, "severity": severity})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
-
     @flask_app.route("/reports", methods=["GET"])
     def api_reports():
         r = list_reports(limit=200)
         return jsonify({"reports": r})
-
     def run():
         flask_app.run(host=host, port=port, debug=False, use_reloader=False)
-
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
 
@@ -679,18 +668,19 @@ CUSTOMS = load_custom_texts()
 # ----------------------------
 def ai_generate_texts(label_key: str, lang: str = "English"):
     label_display = DISPLAY_NAMES.get(label_key, label_key)
+    # fallback templates (no OpenAI call in this cleaned file)
     desc_template = f"{label_display} is a skin condition that typically shows localized changes to the skin (redness, bumps, or texture change). Seek clinical evaluation for persistent or concerning lesions."
     treat_template = "Keep the area clean, avoid triggers, use OTC topical measures when appropriate, and consult a dermatologist."
     if lang == "Hindi":
         desc_template = f"{label_display} एक त्वचा संबंधी समस्या है जो आमतौर पर त्वचा पर लालिमा, दाने या बनावट में बदलाव दिखाती है।"
         treat_template = "क्षेत्र को साफ रखें, ट्रिगर से बचें, और आवश्यक होने पर त्वचा विशेषज्ञ से सलाह लें।"
     if lang == "Telugu":
-        desc_template = f"{label_display} ఒక చెర్మ్ సమస్య, సాధారణంగా చర్మంలో ఎరుపు, గడ్డలు లేదా టెక్స్చర్ మార్పులను చూపుతుంది."
+        desc_template = f"{label_display} ఒక చర్మ సమస్య, సాధారణంగా చర్మంలో ఎరుపు, గడ్డలు లేదా టెక్స్చర్ మార్పులను చూపిస్తుంది."
         treat_template = "ప్రాంతాన్ని శుభ్రంగా ఉంచండి, ట్రిగ్గర్లను నివారించండి, అవసరమైతే డెర్మాటాలజిస్ట్ ని సంప్రదించండి."
     return desc_template, treat_template
 
 # ----------------------------
-# TEXT-TO-SPEECH helper (optional, not required by UI)
+# TEXT-TO-SPEECH helper (gTTS optional)
 # ----------------------------
 try:
     from gtts import gTTS
@@ -711,7 +701,7 @@ def text_to_audio_bytes(text: str, lang_code: str = "en") -> Optional[bytes]:
 # ----------------------------
 # STREAMLIT UI START
 # ----------------------------
-st.set_page_config(page_title="Project S — Skin Disease Classifier (Final)", layout="wide")
+st.set_page_config(page_title="Project S — Skin Disease Classifier (Full)", layout="wide")
 
 # quick fpdf2 version check
 if _fpdf_pkg is None:
@@ -732,19 +722,20 @@ if model_info["type"] == "none":
     st.error("No model found. Place a Keras model at models/skin_classifier.h5 or a TFLite model at models/skin_classifier.tflite")
     st.stop()
 
-# ---- SAFE initialize APP_LANG ----
+# Ensure APP_LANG exists in session_state
 if "APP_LANG" not in st.session_state:
     st.session_state.APP_LANG = "English"
 
-# Defaults
+# ---- Default values for sidebar-controlled options (used by Classifier page) ----
 enable_api = False
 auto_crop = True
-enable_gradcam = True  # Grad-CAM enabled by default (user confirmed)
+enable_gradcam = True
 top_k = TOP_K_DEFAULT
 temperature = 1.0
+# ---------------------------------------------------------------------------------
 
 # ----------------------------
-# SIDEBAR NAV + PAGES
+# SIDEBAR NAV + PAGES (Option A)
 # ----------------------------
 PAGES = [
     "Classifier",
@@ -758,22 +749,16 @@ if "ps_page" not in st.session_state:
     st.session_state.ps_page = "Classifier"
 
 with st.sidebar:
+    st.markdown("### Language & Texts")
     LANGUAGES = ["English", "Hindi", "Telugu"]
-
     st.session_state.APP_LANG = st.selectbox(
         "Select language",
         LANGUAGES,
         index=LANGUAGES.index(st.session_state.APP_LANG)
     )
-
     st.button("Sync from custom_texts.json", key="sync_json_sidebar")
     st.markdown("---")
     st.caption("Project S — informational only.")
-
-
-    page_choice = st.radio("", PAGES, index=PAGES.index(st.session_state.ps_page))
-    st.session_state.ps_page = page_choice
-
 page = st.session_state.ps_page
 
 # ---------- Helper small UI utilities ----------
@@ -793,11 +778,11 @@ def render_history_page():
     df_rows = []
     for r in rows:
         df_rows.append({
-            "id": r["id"],
-            "filename": r["filename"],
-            "timestamp": r["timestamp"],
-            "top_label": r["top_label"],
-            "top_prob": f"{r['top_prob']*100:.1f}%"
+            "id": r[0],
+            "filename": r[1],
+            "timestamp": r[2],
+            "top_label": r[3],
+            "top_prob": f"{r[4]*100:.1f}%"
         })
     df = pd.DataFrame(df_rows)
     st.dataframe(df, use_container_width=True)
@@ -886,7 +871,7 @@ def render_audio_output():
     st.header("🔊 Text-to-Speech (Audio Output)")
     st.markdown("Generate audio from text or use description text from Classifier page.")
     txt = st.text_area("Text to speak (leave empty to test custom text)", height=160)
-    lang_choice = st.selectbox("Language for speech", ["English", "Hindi", "Telugu"], index=0, key="audio_lang")
+    lang_choice = st.selectbox("Language for speech", ["English", "Hindi", "Telugu"], index=0)
     lang_map = {"English":"en","Hindi":"hi","Telugu":"te"}
     lang_code_local = lang_map.get(lang_choice,"en")
     if st.button("Generate audio"):
@@ -935,7 +920,7 @@ if page != "Classifier":
     st.stop()
 
 # -------------------------------
-# CLEAN CLASSIFIER UI
+# CLEAN CLASSIFIER UI (single clean upload + compact layout)
 # -------------------------------
 st.markdown(
     """
@@ -951,22 +936,6 @@ st.markdown(
 
 st.markdown('<div class="title">Skin Disease Classifier</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">Upload a close-up skin image. Diagnostic use is not intended.</div>', unsafe_allow_html=True)
-
-# Classifier controls (minimal): language selector + auto-crop toggle + Grad-CAM toggle
-ccol1, ccol2 = st.columns([3, 1])
-with ccol2:
-    auto_crop = st.checkbox("Auto-crop lesion (heuristic)", value=auto_crop, key="auto_crop_ui")
-    enable_gradcam = st.checkbox("Enable Grad-CAM (Keras only)", value=enable_gradcam, key="gradcam_ui")
-    st.markdown("---")
-    enable_api = st.checkbox("Enable REST API (Flask, background)", value=enable_api, key="api_ui")
-    api_port = st.number_input("API port", min_value=1025, max_value=65535, value=API_PORT_DEFAULT, key="api_port_ui")
-    st.markdown("---")
-    st.subheader("Language & Texts (also in sidebar)")
-    LANGUAGES = ["English", "Hindi", "Telugu"]
-    APP_LANG = st.session_state.APP_LANG
-    if st.button("Sync custom texts", key="sync_json_classifier"):
-        CUSTOMS = load_custom_texts()
-        st.success("Synced custom_texts.json into memory (reloaded).")
 
 with st.container():
     st.markdown('<div class="upload-box">', unsafe_allow_html=True)
@@ -1010,15 +979,7 @@ def get_text_maps(lang: str):
         treats[k] = v
     return descs, treats, lang_code
 
-DESCRIPTIONS, TREATMENTS, LANG_CODE = get_text_maps(APP_LANG)
-
-# Start API if requested
-if enable_api:
-    try:
-        start_api_server(host=API_HOST, port=int(api_port))
-        st.success(f"REST API started at http://{API_HOST}:{int(api_port)} (predict & reports)")
-    except Exception as e:
-        st.warning(f"API failed to start: {e}")
+DESCRIPTIONS, TREATMENTS, LANG_CODE = get_text_maps(st.session_state.APP_LANG)
 
 for fname, pil_img in images:
     st.markdown("---")
@@ -1066,7 +1027,7 @@ for fname, pil_img in images:
         unsafe_allow_html=True,
     )
 
-    # description & treatment (language-aware)
+    # description & treatment
     desc_default = DESCRIPTIONS.get(IDX_TO_LABEL.get(top_idx), "")
     treat_default = TREATMENTS.get(IDX_TO_LABEL.get(top_idx), "")
 
@@ -1091,7 +1052,7 @@ for fname, pil_img in images:
             gradcam_img = overlay_heatmap_on_image(base_img, heatmap, alpha=0.45)
             st.image(gradcam_img, caption="Grad-CAM", width=420)
 
-    # Save / Download options
+    # Save to DB / Download options row
     ops_col1, ops_col2, ops_col3 = st.columns([1,1,1])
     with ops_col1:
         if st.button("Save report to history", key=f"save_{fname}"):
