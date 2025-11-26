@@ -1,5 +1,5 @@
-# Final corrected app.py for Project S — Language fixed (sidebar-only)
-# Single-file Streamlit app.
+# final_app.py  (drop-in replacement for your app.py)
+# Project S — Streamlit app (PDF Unicode-safe, language fix, safer PDF fallback)
 
 import os
 import io
@@ -7,6 +7,7 @@ import json
 import tempfile
 import threading
 import sqlite3
+import re
 from datetime import datetime
 from typing import List, Tuple, Optional, Dict
 
@@ -15,13 +16,12 @@ from PIL import Image, ImageOps
 import numpy as np
 import tensorflow as tf
 
-# Optional libs
 try:
     import cv2
 except Exception:
     cv2 = None
 
-# fpdf2 required
+# PDF
 from fpdf import FPDF
 import fpdf as _fpdf_pkg
 
@@ -47,7 +47,7 @@ DB_PATH = "project_s_reports.db"
 CUSTOM_TEXTS = "custom_texts.json"
 API_HOST = "127.0.0.1"
 API_PORT_DEFAULT = 8502
-FONTS_DIR = "fonts"
+FONTS_DIR = "fonts"  # place Noto fonts here
 
 # ----------------------------
 # CLASS MAPPINGS
@@ -81,16 +81,10 @@ IDX_TO_LABEL = {v: k for k, v in CLASS_INDICES.items()}
 DISPLAY_NAMES = {k: " ".join(w.capitalize() for w in k.split("_")) for k in CLASS_INDICES.keys()}
 
 # ----------------------------
-# TEXTS
+# DEFAULT TEXTS (short placeholders - you can replace with your full texts)
 # ----------------------------
-DESCRIPTIONS_EN = {k: "" for k in CLASS_INDICES.keys()}  # short placeholders
-TREATMENTS_EN = {k: "" for k in CLASS_INDICES.keys()}
-# (populate with real strings or keep earlier ones as needed)
-# For brevity we keep placeholders here — replace with your full texts if desired.
-for k in DESCRIPTIONS_EN:
-    DESCRIPTIONS_EN[k] = k.replace("_", " ").capitalize() + " — brief description."
-    TREATMENTS_EN[k] = "Suggested general care: consult a dermatologist if concerned."
-# Hindi/Telugu copies of English by default
+DESCRIPTIONS_EN = {k: (k.replace("_"," ").capitalize() + " — brief description.") for k in CLASS_INDICES.keys()}
+TREATMENTS_EN = {k: "Suggested care: consult dermatologist if concerned." for k in CLASS_INDICES.keys()}
 DESCRIPTIONS_HI = dict(DESCRIPTIONS_EN)
 TREATMENTS_HI = dict(TREATMENTS_EN)
 DESCRIPTIONS_TE = dict(DESCRIPTIONS_EN)
@@ -102,7 +96,28 @@ TREATMENTS_TE = dict(TREATMENTS_EN)
 def ensure_rgb(pil: Image.Image) -> Image.Image:
     return pil.convert("RGB")
 
-# skin mask (same robust implementation)
+def sanitize_for_pdf(text: str) -> str:
+    """
+    Replace problematic unicode characters with ascii equivalents.
+    Used when a Unicode-capable font is not available.
+    """
+    if not isinstance(text, str):
+        return text
+    replace_map = {
+        "\u2014": "-",  # em-dash
+        "\u2013": "-",  # en-dash
+        "\u2018": "'", "\u2019": "'", "\u201C": '"', "\u201D": '"',
+        "\u2026": "...",
+    }
+    for k, v in replace_map.items():
+        text = text.replace(k, v)
+    # remove any remaining characters outside latin-1 if desired:
+    text = re.sub(r"[^\x00-\xFF]", "?", text)
+    return text
+
+# ----------------------------
+# SKIN MASK & PREPROCESS (same logic as previously)
+# ----------------------------
 def skin_mask_ycrcb(pil: Image.Image) -> np.ndarray:
     arr_rgb = np.asarray(pil.convert("RGB"))
     if cv2 is None:
@@ -117,9 +132,6 @@ def skin_mask_ycrcb(pil: Image.Image) -> np.ndarray:
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
     mask = cv2.medianBlur(mask, 5)
     return mask
-
-# Auto-crop, preprocess, severity, grad-cam and prediction wrappers
-# (Kept concise; use your prior implementations — unchanged logic)
 
 def auto_crop_by_skin(pil: Image.Image, margin=0.02):
     mask = skin_mask_ycrcb(pil)
@@ -150,7 +162,6 @@ def auto_crop_by_skin(pil: Image.Image, margin=0.02):
     return crop, (x0, y0, x1, y1)
 
 from PIL import ImageOps
-
 def preprocess_pil(pil: Image.Image, target_size: Tuple[int,int], auto_crop: bool = True):
     pil = ensure_rgb(pil)
     crop_box = None
@@ -191,8 +202,7 @@ def estimate_severity(original_pil: Image.Image, crop_box: Optional[Tuple[int,in
     level = "Low" if score < 0.33 else ("Medium" if score < 0.66 else "High")
     return {"area_pct": float(area_pct), "redness": redness, "texture": texture, "score": float(score), "level": level}
 
-# Grad-CAM + overlay (same approach as before)
-
+# Grad-CAM & predict wrappers (kept compact)
 def make_gradcam_heatmap(img_array: np.ndarray, model: tf.keras.Model, last_conv_layer_name: Optional[str] = None, pred_index: Optional[int] = None):
     try:
         if last_conv_layer_name is None:
@@ -236,8 +246,6 @@ def overlay_heatmap_on_image(pil_img: Image.Image, heatmap: np.ndarray, alpha: f
     blended = Image.blend(base, heatmap_img, alpha=alpha)
     return blended.convert("RGB")
 
-# Prediction wrappers
-
 def predict_with_model(model_info: Dict, processed_array: np.ndarray, temperature: float = 1.0):
     if model_info["type"] == "keras":
         model = model_info["model"]
@@ -273,129 +281,135 @@ def predict_with_model(model_info: Dict, processed_array: np.ndarray, temperatur
         raise RuntimeError("No model loaded")
 
 # ----------------------------
-# PDF generator (unicode-safe)
+# PDF: Unicode-safe using fpdf2 and Noto fonts (robust fallback)
 # ----------------------------
 class MedicalPDF(FPDF):
     def header(self):
+        # Use self.set_font (not a bare set_font call)
         if "Noto" in self.fonts:
             self.set_font("Noto", size=12)
         else:
-            set_font(unicode_font if unicode_font else "Arial", size=12)
+            # fallback to core font (may not support Unicode)
+            self.set_font("Helvetica", size=12)
         self.set_fill_color(240, 240, 240)
         self.rect(0, 0, self.w, 18, "F")
         self.set_xy(10, 5)
-        self.cell(0, 8, "Project S - Skin Disease Classifier", ln=False)
+        self.cell(0, 8, "Project S - Skin Disease Classifier")
         self.set_xy(self.w - 70, 5)
         self.set_font(self.font_family, size=10)
-        self.cell(60, 8, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ln=False, align="R")
+        self.cell(60, 8, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), align="R")
         self.ln(15)
+
     def footer(self):
         self.set_y(-12)
-        self.set_font("Noto" if "Noto" in self.fonts else "Arial", size=9)
+        self.set_font("Noto" if "Noto" in self.fonts else "Helvetica", size=9)
         self.set_text_color(130, 130, 130)
         self.cell(0, 8, f"Page {self.page_no()}", align="C")
 
 def generate_unicode_pdf(image_pil, preds, desc, treat, severity, gradcam_img=None):
+    """
+    Creates a PDF, uses Noto fonts if present in fonts/; otherwise falls back.
+    When falling back to non-Unicode fonts, non-latin text is sanitized to avoid crashes.
+    """
     pdf = MedicalPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
+    # Add page (header will be called)
     pdf.add_page()
-    en = os.path.join(FONTS_DIR, "NotoSans-Regular.ttf")
-    hi = os.path.join(FONTS_DIR, "NotoSansDevanagari-Regular.ttf")
-    te = os.path.join(FONTS_DIR, "NotoSansTelugu-Regular.ttf")
-    # Force Unicode font loading
-    if os.path.exists(en):
-        pdf.add_font("Noto", "", en)
-        unicode_font = "Noto"
-    elif os.path.exists(hi):
-        pdf.add_font("NotoDev", "", hi)
-        unicode_font = "NotoDev"
-    elif os.path.exists(te):
-        pdf.add_font("NotoTel", "", te)
-        unicode_font = "NotoTel"
-    else:
-        unicode_font = None
 
-    def auto_font(text, size=12):
-        if any("\u0900" <= c <= "\u097F" for c in text):
-            pdf.set_font("NotoDev" if "NotoDev" in pdf.fonts else "Noto", size=size)
-        elif any("\u0C00" <= c <= "\u0C7F" for c in text):
-            pdf.set_font("NotoTel" if "NotoTel" in pdf.fonts else "Noto", size=size)
+    # Try to register Noto fonts if available
+    en_path = os.path.join(FONTS_DIR, "NotoSans-Regular.ttf")
+    hi_path = os.path.join(FONTS_DIR, "NotoSansDevanagari-Regular.ttf")
+    te_path = os.path.join(FONTS_DIR, "NotoSansTelugu-Regular.ttf")
+
+    # Add fonts if files exist (uni=True)
+    try:
+        if os.path.exists(en_path):
+            pdf.add_font("Noto", "", en_path, uni=True)
+        if os.path.exists(hi_path):
+            pdf.add_font("NotoDev", "", hi_path, uni=True)
+        if os.path.exists(te_path):
+            pdf.add_font("NotoTel", "", te_path, uni=True)
+    except Exception:
+        # ignore font registration errors, we'll fallback
+        pass
+
+    # helper to write text with fallback
+    def write_block(title: str, content: str):
+        pdf.set_font("Noto" if "Noto" in pdf.fonts else "Helvetica", size=12)
+        pdf.cell(0, 8, title)
+        pdf.ln(6)
+        # If chosen font doesn't support Unicode (core font), sanitize content
+        use_sanitize = False
+        if not ("Noto" in pdf.fonts or "NotoDev" in pdf.fonts or "NotoTel" in pdf.fonts):
+            use_sanitize = True
+        # If language-specific font available, try to set it
+        # Decide based on presence of Devanagari / Telugu chunks:
+        if any("\u0900" <= c <= "\u097F" for c in content) and "NotoDev" in pdf.fonts:
+            pdf.set_font("NotoDev", size=12)
+            use_sanitize = False
+        elif any("\u0C00" <= c <= "\u0C7F" for c in content) and "NotoTel" in pdf.fonts:
+            pdf.set_font("NotoTel", size=12)
+            use_sanitize = False
+        elif "Noto" in pdf.fonts:
+            pdf.set_font("Noto", size=12)
+            use_sanitize = False
         else:
-            pdf.set_font("Noto" if "Noto" in pdf.fonts else "Arial", size=size)
+            pdf.set_font("Helvetica", size=12)
+            use_sanitize = True
+
+        text_to_write = sanitize_for_pdf(content) if use_sanitize else content
+        try:
+            pdf.multi_cell(pdf.w - 20, 8, text_to_write, fill=False)
+        except Exception:
+            # As a last resort, force sanitize and write
+            pdf.multi_cell(pdf.w - 20, 8, sanitize_for_pdf(content), fill=False)
+        pdf.ln(3)
+
+    # Image (left)
     left_x = 10
     img_width = 90
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
-    os.close(tmp_fd)
-    image_pil.save(tmp_path, "JPEG")
-    pdf.image(tmp_path, x=left_x, y=30, w=img_width)
     try:
-        os.remove(tmp_path)
-    except:
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+        os.close(tmp_fd)
+        image_pil.save(tmp_path, "JPEG")
+        pdf.image(tmp_path, x=left_x, y=30, w=img_width)
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+    except Exception:
+        # ignore image errors
         pass
+
     right_x = left_x + img_width + 20
     pdf.set_xy(right_x, 30)
-    auto_font("Top Prediction:", 14)
-    pdf.cell(0, 8, "Top Prediction:", ln=True)
-    top_idx, top_prob = preds[0]
-    label = DISPLAY_NAMES.get(IDX_TO_LABEL.get(top_idx, ""), f"Class {top_idx}")
-    pdf.set_x(right_x)
-    auto_font(f"{label} - {top_prob*100:.1f}%", 12)
-    pdf.cell(0, 7, f"{label} - {top_prob*100:.1f}%", ln=True)
-    if gradcam_img:
-        tmp_fd, grad_path = tempfile.mkstemp(suffix=".jpg")
-        os.close(tmp_fd)
-        gradcam_img.save(grad_path, "JPEG")
-        pdf.image(grad_path, x=right_x, y=55, w=80)
-        try:
-            os.remove(grad_path)
-        except:
-            pass
-    pdf.set_y(140)
-    auto_font("Description", 14)
-    pdf.cell(0, 10, "Description", ln=True)
-    pdf.set_fill_color(248, 248, 248)
-    # choose correct font based on language
-    if any("\u0900" <= c <= "\u097F" for c in desc):
-        pdf.set_font("NotoDev" if "NotoDev" in pdf.fonts else "Arial", size=12)
-    elif any("\u0C00" <= c <= "\u0C7F" for c in desc):
-        pdf.set_font("NotoTel" if "NotoTel" in pdf.fonts else "Arial", size=12)
-    else:
-        pdf.set_font("Noto" if "Noto" in pdf.fonts else "Arial", size=12)
+    pdf.set_font("Noto" if "Noto" in pdf.fonts else "Helvetica", size=14)
+    pdf.cell(0, 8, "Top Prediction:")
+    pdf.ln(8)
+    if preds:
+        top_idx, top_prob = preds[0]
+        label = DISPLAY_NAMES.get(IDX_TO_LABEL.get(top_idx, ""), f"Class {top_idx}")
+        pdf.set_font("Noto" if "Noto" in pdf.fonts else "Helvetica", size=12)
+        pdf.cell(0, 7, f"{label} - {top_prob*100:.1f}%")
+        pdf.ln(10)
 
-    pdf.multi_cell(pdf.w - 20, 8, desc, fill=True)
-    pdf.ln(5)
-    auto_font("Suggested Treatment", 14)
-    pdf.cell(0, 10, "Suggested Treatment", ln=True)
-    if any("\u0900" <= c <= "\u097F" for c in treat):
-        pdf.set_font("NotoDev" if "NotoDev" in pdf.fonts else "Arial", size=12)
-    elif any("\u0C00" <= c <= "\u0C7F" for c in treat):
-        pdf.set_font("NotoTel" if "NotoTel" in pdf.fonts else "Arial", size=12)
-    else:
-        pdf.set_font("Noto" if "Noto" in pdf.fonts else "Arial", size=12)
+    # Description, Treatment, Severity
+    write_block("Description", desc or "")
+    write_block("Suggested Treatment", treat or "")
+    sev_text = f"Level: {severity.get('level')}\nScore: {severity.get('score'):.2f}\nArea: {severity.get('area_pct')*100:.1f}%\nRedness: {severity.get('redness'):.3f}"
+    write_block("Severity Analysis", sev_text)
 
-    pdf.multi_cell(pdf.w - 20, 8, treat, fill=True)
-    pdf.ln(5)
-    auto_font("Severity Analysis", 14)
-    pdf.cell(0, 10, "Severity Analysis", ln=True)
-    severity_text = (
-        f"Level: {severity.get('level')}\n"
-        f"Score: {severity.get('score'):.2f}\n"
-        f"Area: {severity.get('area_pct')*100:.1f}%\n"
-        f"Redness: {severity.get('redness'):.3f}"
-    )
-    pdf.multi_cell(pdf.w - 20, 8, severity_text, fill=True)
-    data = pdf.output(dest="S")
-    if isinstance(data, bytearray):
-        return bytes(data)
-    if isinstance(data, str):
-        return data.encode("latin-1")
-    return data
+    out = pdf.output(dest="S")
+    if isinstance(out, bytearray):
+        return bytes(out)
+    if isinstance(out, str):
+        return out.encode("latin-1", errors="replace")
+    return out
 
-# expose
 generate_pdf_report = generate_unicode_pdf
 
 # ----------------------------
-# DB helpers
+# DB helpers (unchanged)
 # ----------------------------
 def init_db(db_path=DB_PATH):
     conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -480,22 +494,21 @@ def save_custom_texts(data, path=CUSTOM_TEXTS):
 CUSTOMS = load_custom_texts()
 
 # ----------------------------
-# Streamlit UI — FIX: sidebar-only language (Option A)
+# Streamlit UI
 # ----------------------------
 st.set_page_config(page_title="Project S — Skin Disease Classifier", layout="wide")
 
-# ensure session defaults to avoid AttributeError
+# session defaults (avoid AttributeError)
 st.session_state.setdefault("APP_LANG", "English")
 st.session_state.setdefault("auto_crop", True)
 st.session_state.setdefault("enable_gradcam", True)
 st.session_state.setdefault("top_k", TOP_K_DEFAULT)
 st.session_state.setdefault("temperature", 1.0)
-st.session_state.setdefault("enable_api", False)
+st.session_state.setdefault("ps_page", "Classifier")
 
-# Load model once
-@st.cache_resource
+# Load model (cached)
+@st.cache_resource(show_spinner=False)
 def load_model_safe():
-    # minimal wrapper to reuse your load_model logic — you can adapt
     info = {"type": "none", "model": None, "input_shape": (IMG_SIZE, IMG_SIZE, 3)}
     if os.path.exists(MODEL_PATH):
         try:
@@ -527,83 +540,79 @@ def load_model_safe():
 
 model_info = load_model_safe()
 if model_info["type"] == "none":
-    st.error("No model found. Place a model in models/ and reload.")
-    st.stop()
+    st.warning("No model found. Place a Keras model at models/skin_classifier.h5 or a TFLite model at models/skin_classifier.tflite")
+    # Do not exit immediately to let user interact with other pages
+    # st.stop()
 
-# ----------------------------
-# Sidebar — SINGLE language selector (stores in session_state.APP_LANG)
-# ----------------------------
+# Sidebar (single language selector, unique keys)
 with st.sidebar:
     st.markdown("## Settings")
     st.selectbox("Select language", ["English", "Hindi", "Telugu"], key="APP_LANG")
-    if st.button("Sync from custom_texts.json"):
+    if st.button("Sync from custom_texts.json", key="sync_btn"):
         CUSTOMS = load_custom_texts()
         st.success("Synced custom_texts.json into memory.")
     st.markdown("---")
     st.caption("Project S — informational only.")
 
-# Read language from session_state (sidebar authoritative)
-APP_LANG = st.session_state.APP_LANG
-
-# ----------------------------
-# Pages (simple dispatcher)
-# ----------------------------
+# Navigation radio
 PAGES = ["Classifier", "History", "Custom Text Editor", "Skin Detection Preview", "Audio Output", "Severity Charts"]
-if "ps_page" not in st.session_state:
-    st.session_state.ps_page = "Classifier"
-
 with st.sidebar:
     page_choice = st.radio("Navigation", PAGES, index=PAGES.index(st.session_state.ps_page))
     st.session_state.ps_page = page_choice
 
 page = st.session_state.ps_page
+APP_LANG = st.session_state.APP_LANG
 
-# Page implementations (reuse your functions but they will read APP_LANG from session_state)
-
+# Page functions (concise)
 def render_history_page():
-    st.header("History")
-    rows = list_reports()
+    st.header("History — Saved Reports")
+    rows = list_reports(limit=500)
     if not rows:
         st.info("No saved reports.")
         return
-    df = pd.DataFrame([{"id": r['id'], 'filename': r['filename'], 'timestamp': r['timestamp'], 'top_label': r['top_label'], 'top_prob': f"{r['top_prob']*100:.1f}%"} for r in rows])
-    st.dataframe(df, use_container_width=True)
+    df_rows = [{"id": r["id"], "filename": r["filename"], "timestamp": r["timestamp"], "top_label": r["top_label"], "top_prob": f"{r['top_prob']*100:.1f}%"} for r in rows]
+    st.dataframe(pd.DataFrame(df_rows), use_container_width=True)
 
 def render_custom_text_editor():
     st.header("Custom Text Editor")
     customs = load_custom_texts()
     sel = st.selectbox("Select class", list(CLASS_INDICES.keys()), format_func=lambda k: DISPLAY_NAMES.get(k, k))
-    cur_desc = customs.get('descriptions', {}).get(sel, DESCRIPTIONS_EN.get(sel, ''))
-    cur_treat = customs.get('treatments', {}).get(sel, TREATMENTS_EN.get(sel, ''))
+    cur_desc = customs.get("descriptions", {}).get(sel, DESCRIPTIONS_EN.get(sel, ""))
+    cur_treat = customs.get("treatments", {}).get(sel, TREATMENTS_EN.get(sel, ""))
     new_desc = st.text_area("Description", value=cur_desc, height=120)
     new_treat = st.text_area("Treatment", value=cur_treat, height=120)
-    if st.button("Save for class"):
-        customs.setdefault('descriptions', {})[sel] = new_desc
-        customs.setdefault('treatments', {})[sel] = new_treat
+    if st.button("Save changes for selected class", key="save_custom"):
+        customs.setdefault("descriptions", {})[sel] = new_desc
+        customs.setdefault("treatments", {})[sel] = new_treat
         save_custom_texts(customs)
-        st.success("Saved.")
+        st.success("Saved custom text.")
 
 def render_skin_preview():
     st.header("Skin Detection Preview")
-    up = st.file_uploader("Upload image", type=["jpg","jpeg","png"])
+    up = st.file_uploader("Upload image", type=["jpg","jpeg","png"], key="preview_up")
     if not up:
         st.info("Upload an image to preview.")
         return
     pil = Image.open(io.BytesIO(up.read())).convert("RGB")
-    st.image(pil, width=420)
+    st.image(pil, caption="Original", width=420)
     mask = skin_mask_ycrcb(pil)
-    st.image(Image.fromarray(np.stack([mask]*3, axis=2)), width=420)
+    mask_img = Image.fromarray(np.stack([mask]*3, axis=2))
+    st.image(mask_img, caption="Skin mask (white = skin)", width=420)
+    crop, box = auto_crop_by_skin(pil)
+    if crop is not None:
+        st.image(crop, caption=f"Auto-crop preview {box}", width=360)
+    else:
+        st.info("Auto-crop heuristic couldn't find a dominant skin region.")
 
-# Simple audio page (TTS omitted for brevity)
 def render_audio_output():
     st.header("Audio Output")
-    st.info("TTS available if gTTS installed.")
+    st.info("TTS is available if gTTS is installed. (Not included in this file.)")
 
 def render_severity_charts():
     st.header("Severity Charts")
     up = st.file_uploader("Upload image", type=["jpg","jpeg","png"], key="sev_up")
     if not up:
-        st.info("Upload to compute severity.")
+        st.info("Upload an image to compute severity.")
         return
     img = Image.open(io.BytesIO(up.read())).convert("RGB")
     sev = estimate_severity(img, None)
@@ -614,7 +623,7 @@ def render_severity_charts():
     ax.set_ylim(0,100)
     st.pyplot(fig)
 
-# Page dispatcher
+# Dispatcher
 if page != "Classifier":
     if page == "History":
         render_history_page()
@@ -629,11 +638,10 @@ if page != "Classifier":
     st.stop()
 
 # -------------------------------
-# Classifier page (reads language from sidebar-only APP_LANG)
+# Classifier page
 # -------------------------------
 st.markdown("<h1>Skin Disease Classifier</h1>", unsafe_allow_html=True)
 
-# Classifier controls stored in session_state with unique keys
 col_left, col_right = st.columns([3,1])
 with col_right:
     st.checkbox("Auto-crop lesion", key="auto_crop")
@@ -655,69 +663,104 @@ if not images:
     st.info("Upload or capture an image to continue.")
     st.stop()
 
-# Resolve language maps using session_state.APP_LANG (sidebar authoritative)
-
+# Resolve language maps
 def get_text_maps(lang: str):
     if lang == "Hindi":
-        return DESCRIPTIONS_HI, TREATMENTS_HI, 'hi'
-    if lang == "Telugu":
-        return DESCRIPTIONS_TE, TREATMENTS_TE, 'te'
-    return DESCRIPTIONS_EN, TREATMENTS_EN, 'en'
+        base_desc, base_treat = DESCRIPTIONS_HI, TREATMENTS_HI
+    elif lang == "Telugu":
+        base_desc, base_treat = DESCRIPTIONS_TE, TREATMENTS_TE
+    else:
+        base_desc, base_treat = DESCRIPTIONS_EN, TREATMENTS_EN
+    customs = load_custom_texts()
+    descs = dict(base_desc)
+    treats = dict(base_treat)
+    for k, v in customs.get("descriptions", {}).items():
+        descs[k] = v
+    for k, v in customs.get("treatments", {}).items():
+        treats[k] = v
+    # choose language code for potential TTS later
+    lang_code = "hi" if lang == "Hindi" else ("te" if lang == "Telugu" else "en")
+    return descs, treats, lang_code
 
-DESCRIPTIONS, TREATMENTS, LANG_CODE = get_text_maps(st.session_state.APP_LANG)
+DESCRIPTIONS, TREATMENTS, LANG_CODE = get_text_maps(APP_LANG)
 
 for fname, pil_img in images:
     st.header(f"Image: {fname}")
-    st.image(pil_img, width=420)
+    st.image(pil_img, caption="Original", width=420)
+
     mask = skin_mask_ycrcb(pil_img)
     skin_frac = float((mask > 0).sum()) / (mask.shape[0] * mask.shape[1] + 1e-9)
     st.write(f"Skin pixel fraction: {skin_frac:.3f}")
     if skin_frac < 0.02:
-        st.error("Not a skin image")
+        st.error("Not a skin image (low skin pixel fraction). Try another photo.")
         continue
-    target_h, target_w, _ = model_info['input_shape']
+
+    target_h, target_w, _ = model_info.get("input_shape", (IMG_SIZE, IMG_SIZE, 3))
     processed_arr, crop_box = preprocess_pil(pil_img, target_size=(target_h, target_w), auto_crop=st.session_state.auto_crop)
     severity = estimate_severity(pil_img, crop_box)
+
     try:
-        probs = predict_with_model(model_info, processed_arr, temperature=st.session_state.temperature)
+        if model_info["type"] == "none":
+            # If no model, skip prediction but allow PDF export & description display
+            probs = np.zeros(len(IDX_TO_LABEL))
+        else:
+            probs = predict_with_model(model_info, processed_arr, temperature=st.session_state.temperature)
     except Exception as e:
         st.error(f"Prediction failed: {e}")
         continue
+
     top_k_local = st.session_state.top_k
     top_indices = np.argsort(probs)[::-1][:top_k_local]
     preds = [(int(i), float(probs[i])) for i in top_indices]
-    top_idx, top_prob = preds[0]
-    top_label = DISPLAY_NAMES.get(IDX_TO_LABEL.get(top_idx, ''), f'class_{top_idx}')
+
+    top_idx, top_prob = preds[0] if preds else (0, 0.0)
+    top_label = DISPLAY_NAMES.get(IDX_TO_LABEL.get(top_idx, ""), f"class_{top_idx}")
     st.markdown(f"### 🔍 Prediction — *{top_label}*")
     st.markdown(f"**Confidence:** {top_prob*100:.1f}%")
-    desc_default = DESCRIPTIONS.get(IDX_TO_LABEL.get(top_idx), '')
-    treat_default = TREATMENTS.get(IDX_TO_LABEL.get(top_idx), '')
+
+    desc_default = DESCRIPTIONS.get(IDX_TO_LABEL.get(top_idx), "")
+    treat_default = TREATMENTS.get(IDX_TO_LABEL.get(top_idx), "")
+
     colA, colB = st.columns([2,3])
     with colA:
         new_desc = st.text_area(f"desc_{fname}", value=desc_default, height=120)
     with colB:
         new_treat = st.text_area(f"treat_{fname}", value=treat_default, height=120)
         st.write(f"Severity: {severity['level']} (score {severity['score']:.2f})")
+
     gradcam_img = None
-    if st.session_state.enable_gradcam and model_info['type'] == 'keras':
+    if st.session_state.enable_gradcam and model_info.get('type') == 'keras':
         heatmap = make_gradcam_heatmap(processed_arr, model_info['model'], None, int(top_idx))
         if heatmap is not None:
             base_img = pil_img.crop(crop_box).resize((target_w, target_h)) if crop_box else pil_img.resize((target_w, target_h))
             gradcam_img = overlay_heatmap_on_image(base_img, heatmap, alpha=0.45)
-            st.image(gradcam_img, caption='Grad-CAM', width=420)
+            st.image(gradcam_img, caption="Grad-CAM", width=420)
+
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button('Save report', key=f'save_{fname}'):
+        if st.button("Save report", key=f"save_{fname}"):
             save_report_to_db(fname, preds, new_desc, new_treat, severity, pil_img)
-            st.success('Saved')
+            st.success("Saved report to DB.")
     with c2:
-        pdfb = generate_pdf_report(pil_img, preds, new_desc, new_treat, severity, gradcam_img)
-        if pdfb:
-            st.download_button('Download PDF', pdfb, file_name=f'report_{fname}.pdf', mime='application/pdf')
+        try:
+            pdfb = generate_pdf_report(pil_img, preds, new_desc, new_treat, severity, gradcam_img)
+            if pdfb:
+                st.download_button("Download PDF", pdfb, file_name=f"report_{fname}.pdf", mime="application/pdf")
+        except Exception as e:
+            st.error(f"PDF generation failed: {e}")
     with c3:
-        if st.button('Export CSV', key=f'csv_{fname}'):
-            row = {'filename': fname, 'timestamp': datetime.now().isoformat(), 'top_label': IDX_TO_LABEL.get(top_idx, str(top_idx)), 'top_prob': top_prob, 'preds': json.dumps(preds), 'severity': json.dumps(severity)}
+        if st.button("Export CSV", key=f"csv_{fname}"):
+            row = {
+                "filename": fname,
+                "timestamp": datetime.now().isoformat(),
+                "top_label": IDX_TO_LABEL.get(top_idx, str(top_idx)),
+                "top_prob": top_prob,
+                "preds": json.dumps(preds),
+                "severity": json.dumps(severity)
+            }
             df = pd.DataFrame([row])
-            st.download_button('Download CSV', df.to_csv(index=False).encode('utf8'), file_name=f'prediction_{fname}.csv', mime='text/csv')
+            st.download_button("Download CSV", df.to_csv(index=False).encode("utf8"), file_name=f"prediction_{fname}.csv", mime="text/csv")
 
-st.caption('Project S — informational only. Not a medical device.')
+st.caption("Project S — informational only. Not a medical device. Always consult a dermatologist.")
+
+# End of file
